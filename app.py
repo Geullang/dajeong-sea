@@ -50,12 +50,12 @@ def image_for(p):
  # Individual JPG illustrations are packed in ONE ZIP to make GitHub web upload
  # possible (<100 uploaded files). Every member is a distinct complete JPG.
  filename=file_for(p['name'])
- bundle=ROOT/'assets'/'illustrations.zip'
- if bundle.exists():
-  try:
-   with ZipFile(bundle) as z:
-    if filename in z.namelist():return io.BytesIO(z.read(filename))
-  except (OSError, BadZipFile):pass
+ for bundle in (ROOT/'assets'/'illustrations.zip', ROOT/'illustrations.zip'):
+  if bundle.is_file():
+   try:
+    with ZipFile(bundle) as z:
+     if filename in z.namelist():return io.BytesIO(z.read(filename))
+   except (OSError, BadZipFile, KeyError):pass
  # Places newly discovered by Kakao receive a fresh unique illustration.
  return io.BytesIO(art_bytes(p['name'],p['category']))
 
@@ -91,7 +91,13 @@ shared=st.session_state.shared
 st.markdown('<div class="kicker">🌊 2027 겨울 물꼬방</div>',unsafe_allow_html=True)
 st.markdown('<div class="hero-title">다정한 바다<br>산책 코스 메이커</div>',unsafe_allow_html=True)
 st.markdown('<div class="hero-sub">가벼운 마음이 멀리 간다</div><div class="byline">BY 물꼬방 약국</div>',unsafe_allow_html=True)
-st.image(str(ROOT/'assets'/'hero.png'),use_container_width=True)
+# The flat-file release keeps this image at repository root.
+hero=next((path for path in (ROOT/'assets'/'hero.png', ROOT/'hero.png') if path.is_file()),None)
+if hero:
+ st.image(str(hero),use_container_width=True)
+else:
+ # Artwork fallback avoids a FileNotFoundError while showing an honest drawing.
+ st.image(io.BytesIO(art_bytes('부산의 바다','자연·풍경')),use_container_width=True)
 st.markdown('<div class="hero-caption">2027. 1. 9. 토요일 · 부산 · 교사들의 느긋한 동네 탐방</div>',unsafe_allow_html=True)
 
 st.header('01  어떤 바다를 걸을까요?')
