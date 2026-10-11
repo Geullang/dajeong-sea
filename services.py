@@ -112,6 +112,11 @@ def candidates_for_area(area_id,key,max_count=50):
   v=cleaned(doc,seed)
   if not v or v['kakao_id'] in used:return False
   if distance(center,(v['lat'],v['lon']))>radius/1000+.4:return False
+  # Kakao center-radius alone included venues outside Namcheon-dong. Require the legal address as well.
+  if area_id=='namcheon':
+   land_addr=doc.get('address_name','')
+   if not re.search(r"(?:부산(?:광역시)?\s+)?수영구\s+남천동(?:\s|$)",land_addr):return False
+  # For other areas, apply the documented area center radius pending hand-curated polygons.
   # Kakao may return a different region for generic names; location radius is decisive.
   out.append(v);used.add(v['kakao_id']);return True
  for seed in SEEDS:
@@ -248,14 +253,14 @@ def optimize_order(origin,spots):
   if not improved:break
  return out
 
-def plan_schedule(origin,spots,start,end,mode='도보',meal_buffer=0,route_fn=valhalla_route,batch_route_fn=None):
+def plan_schedule(origin,spots,start,end,mode='도보',meal_buffer=0,route_fn=valhalla_route,batch_route_fn=None,fixed_order=False):
  """start/end are HH:MM. Does not pretend unverified hours are known."""
  day=datetime(2027,1,9)
  beginning=datetime.combine(day.date(),datetime.strptime(start,'%H:%M').time())
  deadline=datetime.combine(day.date(),datetime.strptime(end,'%H:%M').time())
  if deadline<=beginning:raise ValueError('종료 시각은 시작 시각보다 늦어야 합니다.')
  if not spots:raise ValueError('장소를 한 곳 이상 선택하세요.')
- order=optimize_order((origin['lat'],origin['lon']),spots)
+ order=spots[:] if fixed_order else optimize_order((origin['lat'],origin['lon']),spots)
  coords=[(origin['lat'],origin['lon'])]+[(p['lat'],p['lon']) for p in order]
  batch=(batch_route_fn or batch_routes)(coords,mode) if route_fn is valhalla_route else None
  if batch is not None and len(batch)!=len(order):raise ValueError('경로 구간 수가 맞지 않습니다.')
