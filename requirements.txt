@@ -1,1 +1,5 @@
-streamlit>=1.42,<2
+streamlit>=1.35,<2
+requests>=2.31
+pandas>=2.0
+folium>=0.16
+streamlit-folium>=0.20
