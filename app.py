@@ -1,286 +1,276 @@
-import math
-import json
+"""다정한 바다 산책 코스 메이커 | 물꼬방 2027-01-09 부산 자유탐방."""
+from __future__ import annotations
+import base64, csv, hashlib, html, io, json, os, zlib
+from datetime import datetime, time
 from pathlib import Path
-from datetime import datetime, timedelta
 from urllib.parse import quote
-
 import folium
 import pandas as pd
-import requests
 import streamlit as st
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
+from PIL import Image
+from zipfile import ZipFile, BadZipFile
+from artwork import file_for,art_bytes
+from services import AREA,AREAS,CATEGORIES,candidates_for_area,find_origin,plan_schedule,distance
 
-st.set_page_config(page_title="2027 겨울 물꼬방 | 산책 코스 메이커", page_icon="🌊", layout="centered")
-st.markdown("""<style>.block-container{max-width:850px;padding-top:1.1rem}.intro{background:#eff8f8;padding:16px 19px;border-radius:16px;margin-bottom:12px}.place{padding:6px 0}.muted{color:#66717b;font-size:.91rem}h1,h2,h3{letter-spacing:-.04em}</style>""", unsafe_allow_html=True)
-
-# 장소 소개는 편집자가 작성한 추천 문구입니다. 주소·전화·좌표는 카카오 로컬 API로 확인합니다.
-AREAS = {
-    "남천동·광안리": {"center": (35.145,129.113), "spots": [
-        ("남천해변공원", "볼거리·서점·소품샵", "광안대교와 바다를 한눈에 바라보며 여유롭게 걷기 좋은 곳이에요.", "겨울 바닷바람에 대비하세요.", 25),
-        ("삼익비치 산책길", "볼거리·서점·소품샵", "오래된 주거지와 바다가 만나는 남천동의 산책 풍경을 느껴보세요.", "1월에는 벚꽃이 피지 않습니다.", 20),
-        ("인디고서원", "볼거리·서점·소품샵", "책과 인문학을 좋아하는 선생님들에게 특별히 권하고 싶은 공간입니다.", "예약제·방문 가능 여부를 미리 확인하세요.", 25),
-        ("샵메이커즈", "볼거리·서점·소품샵", "독립출판물과 디자인 소품을 둘러보며 취향을 발견하는 즐거움이 있습니다.", "영업 여부와 위치를 확인하세요.", 25),
-        ("무슈뱅상", "빵집", "바게트와 크루아상 등 빵 자체의 풍미를 즐기는 분에게 어울리는 작은 빵집입니다.", "인기 빵은 일찍 품절될 수 있어요.", 20),
-        ("메트르 아티정", "빵집", "여러 종류의 프랑스식 제과·제빵을 비교해 고르는 재미가 있는 곳입니다.", "당일 영업과 인기 메뉴 재고를 확인하세요.", 20),
-        ("옵스 남천점", "빵집", "부산에서 친숙하게 만날 수 있는 베이커리로, 선물용 빵을 고르기에도 좋습니다.", "혼잡할 수 있어요.", 20),
-        ("크레스트커피바", "카페", "책방과 빵집을 둘러본 뒤 대화를 나누며 쉬어가기 좋은 후보입니다.", "4인 좌석과 영업시간을 확인하세요.", 40),
-        ("히떼로스터리 광안점", "카페", "커피 맛에 관심 있는 선생님들이 즐기기 좋은 로스터리 카페입니다.", "좌석과 운영시간을 확인하세요.", 40),
-        ("마잘 로스터스", "카페", "산책 도중 커피 한 잔의 여유를 즐기기 위한 후보입니다.", "정확한 매장 위치와 영업 여부를 확인하세요.", 40),
-        ("고옥", "식사", "장어덮밥으로 특별한 한 끼를 즐기고 싶은 모둠에 추천합니다.", "예산이 비교적 높을 수 있고 대기가 생길 수 있습니다.", 70),
-        ("다이도코로 광안리본점", "식사", "가라아게 등 일본 가정식 메뉴로 편안하게 식사하고 싶을 때 좋습니다.", "4인 좌석과 메뉴 가격을 확인하세요.", 60),
-        ("거북이동네 부산남천점", "식사", "함께 고기를 구우며 느긋하게 이야기 나누고 싶은 모둠에 어울립니다.", "대기와 식사 시간을 넉넉히 잡으세요.", 75),
-    ]},
-    "광안리 해변": {"center": (35.153,129.119), "spots": [
-        ("광안리해수욕장", "볼거리·서점·소품샵", "광안대교를 바라보며 부산의 바다를 만나는 대표 산책길입니다.", "겨울 바람과 해변 혼잡을 고려하세요.", 35),
-        ("밀락더마켓", "볼거리·서점·소품샵", "바다 근처에서 여러 매장과 공간을 한 번에 둘러보기 좋습니다.", "입점 매장과 운영시간이 달라질 수 있습니다.", 40),
-        ("민락수변공원", "볼거리·서점·소품샵", "해안선을 따라 바다 풍경을 감상하며 쉬어가기 좋은 곳입니다.", "기상 상황을 확인하세요.", 30),
-        ("옵스 남천점", "빵집", "부산의 베이커리 문화를 맛보기 좋은 후보입니다.", "이 지역에서 이동거리가 길 수 있습니다.", 20),
-        ("히떼로스터리 광안점", "카페", "커피를 좋아하는 선생님들이 찾기 좋은 로스터리 카페입니다.", "좌석 확인이 필요합니다.", 40),
-        ("다이도코로 광안리본점", "식사", "일본 가정식으로 든든하게 저녁을 마무리하기 좋습니다.", "대기와 영업시간을 확인하세요.", 60),
-    ]},
-    "영도": {"center": (35.078,129.044), "spots": [
-        ("흰여울문화마을", "볼거리·서점·소품샵", "바다를 따라 이어지는 골목과 풍경을 즐길 수 있는 곳입니다.", "경사와 계단이 많습니다.", 60),
-        ("태종대", "볼거리·서점·소품샵", "탁 트인 해안 경관이 인상적인 부산의 대표 명소입니다.", "이동거리와 운영시설을 확인하세요.", 75),
-        ("국립해양박물관", "볼거리·서점·소품샵", "바다와 해양문화를 함께 살펴볼 수 있는 공간입니다.", "전시·휴관 일정을 확인하세요.", 70),
-    ]},
-    "해운대": {"center": (35.162,129.163), "spots": [
-        ("해운대해수욕장", "볼거리·서점·소품샵", "겨울 바다를 보며 산책하기 좋은 해변입니다.", "강풍에 유의하세요.", 40),
-        ("해운대블루라인파크 미포정거장", "볼거리·서점·소품샵", "해안 풍경을 따라 이동하는 열차를 체험할 수 있습니다.", "별도 승차권 예약·시간표 확인이 필요합니다.", 70),
-        ("청사포", "볼거리·서점·소품샵", "항구와 바다 풍경을 여유롭게 감상할 수 있는 곳입니다.", "미포에서 이동 시간을 고려하세요.", 45),
-    ]},
-    "보수동 책방골목": {"center": (35.102,129.024), "spots": [
-        ("보수동 책방골목", "볼거리·서점·소품샵", "헌책방을 둘러보며 오래된 책의 이야기를 만나는 곳입니다.", "서점별 운영시간이 다릅니다.", 60),
-        ("국제시장", "볼거리·서점·소품샵", "부산의 골목과 상점 풍경을 둘러보는 재미가 있습니다.", "혼잡할 수 있습니다.", 45),
-        ("부평깡통시장", "식사", "다양한 먹거리를 나누어 맛보는 시장 산책에 어울립니다.", "좌석·메뉴·가격은 점포별로 다릅니다.", 50),
-    ]},
-    "도모헌 일대": {"center": (35.156,129.107), "spots": [
-        ("도모헌", "볼거리·서점·소품샵", "정원과 문화공간을 둘러보며 차분한 시간을 보내기 좋습니다.", "전시 및 휴관일을 확인하세요.", 60),
-    ]},
-}
-CATS = ["볼거리·서점·소품샵", "빵집", "카페", "식사"]
-ICONS = ["📚", "🥐", "☕", "🍽️"]
-PHOTO_MANIFEST = Path(__file__).parent / "photos.json"
-PHOTO_DIR = Path(__file__).parent / "photos"
-
-@st.cache_data(show_spinner=False)
-def photo_catalog():
-    try:
-        return json.loads(PHOTO_MANIFEST.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-def photo_for(name):
-    """Only display explicitly supplied, verified photographs. No unrelated stock images."""
-    entry = photo_catalog().get(name, {})
-    if isinstance(entry, str):
-        entry = {"file": entry}
-    filename = entry.get("file", "")
-    if filename and Path(filename).name == filename:
-        path = PHOTO_DIR / filename
-        if path.is_file():
-            return str(path), entry.get("credit", "")
-    return None, None
-
-ORIGINS = {"보다스테이 2·3호": "부산 광안리 보다스테이", "보다스테이 더펜트": "부산 보다스테이 더펜트", "광안리273": "부산 광안리273"}
-
-@st.cache_data(ttl=60*60*12, show_spinner=False)
-def kakao_find(query, lat=None, lon=None):
-    try:
-        key = st.secrets["KAKAO_REST_API_KEY"]
-        params = {"query": query, "size": 10}
-        if lat is not None and lon is not None:
-            params.update({"x": lon, "y": lat, "sort": "distance"})
-        r = requests.get("https://dapi.kakao.com/v2/local/search/keyword.json", headers={"Authorization": f"KakaoAK {key}"}, params=params, timeout=8)
-        r.raise_for_status()
-        return r.json().get("documents", []), ""
-    except KeyError:
-        return [], "Streamlit Secrets에 KAKAO_REST_API_KEY가 없습니다."
-    except requests.RequestException as e:
-        return [], f"카카오 장소 조회 실패: {type(e).__name__} (API 활성화·쿼터·키 설정을 확인하세요.)"
+ROOT=Path(__file__).resolve().parent
+PUBLIC_URL=os.environ.get('PUBLIC_APP_URL','https://dajeong-sea-jnbtnkxhn5vhxwskczvu7p.streamlit.app/')
+st.set_page_config(page_title='다정한 바다 | 물꼬방 산책 코스 메이커',page_icon='🌊',layout='wide',initial_sidebar_state='collapsed')
+st.markdown('''<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Nanum+Myeongjo:wght@400;700&display=swap');
+:root{--cream:#fbf8f0;--ink:#243c4b;--sea:#4a8498;--line:#d8e6e6}
+html,body,[class*="css"],.stApp{font-family:'Noto Sans KR',sans-serif}
+.stApp{background:linear-gradient(160deg,#fbf8f0 0%,#f8faf8 55%,#f4f8f8 100%);color:var(--ink)}
+.block-container{max-width:1120px;padding:1.1rem 1.8rem 5rem}
+h1,h2,h3{letter-spacing:-.035em;color:#26495b}
+h1{font-size:2.6rem!important}h2{font-size:1.55rem!important}
+.stButton>button[kind='primary'],button[data-testid='stBaseButton-primary']{background:#366f86;color:#fff;border-radius:22px;border:0;font-weight:700}
+.stButton>button{border-radius:22px;border:1px solid #bcd4d8}
+[data-testid='stMetric']{background:white;border:1px solid #e5eeee;padding:12px;border-radius:15px}
+[data-testid='stVerticalBlockBorderWrapper']{background:rgba(255,255,255,.74);border-radius:20px}
+[data-testid='stImage'] img{border-radius:16px;object-fit:cover}
+div[data-baseweb="tag"]{background:#d5e9e8!important;color:#2e6072!important}
+div[data-baseweb="tag"] span{color:#2e6072!important}
+[data-testid='stForm']{border-radius:20px}
+.hero-caption{text-align:center;margin:-.4rem 0 1.5rem;color:#687f86;font-size:.93rem}
+.kicker{letter-spacing:.18em;color:#558ea0;text-align:center;font-size:.83rem;font-weight:700;margin-top:8px}
+.hero-title{font-family:'Nanum Myeongjo',serif;text-align:center;font-size:clamp(1.8rem,4.5vw,3.25rem);font-weight:700;color:#2b5368;margin:6px 0}
+.hero-sub{font-family:'Nanum Myeongjo',serif;text-align:center;font-size:1.15rem;color:#627a88;line-height:1.8}
+.section-note{font-size:.88rem;color:#68828b}
+.byline{font-size:.77rem;letter-spacing:.16em;text-align:center;color:#8a9393;margin-top:6px}
+.area-note{border-left:3px solid #95bfcd;padding:12px 16px;color:#496774;background:#f0f7f7;border-radius:2px 12px 12px 2px;margin:12px 0 20px}
+hr{border-color:#e0e8e4}
+@media(max-width:700px){.block-container{padding:.6rem .9rem 4rem}h1{font-size:1.9rem!important}.hero-title{font-size:1.9rem!important}}
+</style>''',unsafe_allow_html=True)
 
 
-def resolve(name, center):
-    docs, error = kakao_find(f"부산 {name}", *center)
-    if not docs:
-        return None, error
-    normalized = name.replace(" ", "")
-    match = next((d for d in docs if normalized in d["place_name"].replace(" ", "") or d["place_name"].replace(" ", "") in normalized), docs[0])
-    return {"name": match["place_name"], "address": match.get("road_address_name") or match.get("address_name"), "phone": match.get("phone", ""), "url": match.get("place_url", ""), "lat": float(match["y"]), "lon": float(match["x"]), "category": match.get("category_name", "")}, error
+def safe(s):return html.escape(str(s or ''))
+
+def image_for(p):
+ # Individual JPG illustrations are packed in ONE ZIP to make GitHub web upload
+ # possible (<100 uploaded files). Every member is a distinct complete JPG.
+ filename=file_for(p['name'])
+ bundle=ROOT/'assets'/'illustrations.zip'
+ if bundle.exists():
+  try:
+   with ZipFile(bundle) as z:
+    if filename in z.namelist():return io.BytesIO(z.read(filename))
+  except (OSError, BadZipFile):pass
+ # Places newly discovered by Kakao receive a fresh unique illustration.
+ return io.BytesIO(art_bytes(p['name'],p['category']))
+
+@st.cache_data(ttl=2400,show_spinner=False)
+def load_area(area_id,_key):return candidates_for_area(area_id,_key,max_count=55)
 
 
-def distance_km(a, b):
-    r = 6371
-    dlat = math.radians(b[0]-a[0]); dlon = math.radians(b[1]-a[1])
-    z = math.sin(dlat/2)**2 + math.cos(math.radians(a[0]))*math.cos(math.radians(b[0]))*math.sin(dlon/2)**2
-    return 2*r*math.asin(math.sqrt(z))
+from exports import pack_share,unpack_share,ics_text
 
+def make_map(origin,plan):
+ coords=[(origin['lat'],origin['lon'])]+[(p['lat'],p['lon']) for p in plan['ordered']]
+ m=folium.Map(location=coords[min(1,len(coords)-1)],zoom_start=13,tiles='OpenStreetMap',control_scale=True)
+ folium.Marker(coords[0],tooltip='출발: '+origin['name'],icon=folium.Icon(color='darkblue',icon='home',prefix='fa')).add_to(m)
+ for n,p in enumerate(plan['ordered'],1):
+  tooltip=html.escape(f"{n}. {p['name']} · {plan['schedule'][n-1]['arrive']}")
+  folium.Marker((p['lat'],p['lon']),tooltip=tooltip,
+    popup=folium.Popup(f'<b>{safe(p["name"])}</b><p>{safe(p["address"])}</p>',max_width=260),
+    icon=folium.DivIcon(html=f'<div style="height:29px;width:29px;background:#39798d;color:white;border:2px solid #fff;border-radius:50%;font-size:14px;font-weight:bold;text-align:center;line-height:26px;box-shadow:0 2px 4px #777">{n}</div>')).add_to(m)
+ for leg in plan['legs']:
+  folium.PolyLine(locations=leg['shape'],color='#2a748f' if leg['verified'] else '#cc8b65',
+   weight=4,opacity=.9,dash_array=None if leg['verified'] else '7,8',tooltip=('공개 보행/차량 경로' if leg['verified'] else '실제 경로 미검증 · 추정선')).add_to(m)
+ m.fit_bounds(coords,padding=(30,30))
+ return m
 
-def order_nearby(places, origin):
-    remaining = places.copy(); result = []; here = origin
-    while remaining:
-        p = min(remaining, key=lambda x: distance_km(here, (x["geo"]["lat"], x["geo"]["lon"])))
-        result.append(p); remaining.remove(p)
-        here = (p["geo"]["lat"], p["geo"]["lon"])
-    return result
+if 'selected' not in st.session_state:st.session_state.selected={}
+if 'route' not in st.session_state:st.session_state.route=None
+if 'loaded_token' not in st.session_state:
+ st.session_state.loaded_token=str(st.query_params.get('plan',''))
+ st.session_state.shared=unpack_share(st.session_state.loaded_token)
+shared=st.session_state.shared
 
-for key, value in {"phase": 1, "selected": [], "route": []}.items():
-    if key not in st.session_state: st.session_state[key] = value
+# Hero picture is a purpose-made original painting, not a location photograph.
+st.markdown('<div class="kicker">🌊 2027 겨울 물꼬방</div>',unsafe_allow_html=True)
+st.markdown('<div class="hero-title">다정한 바다<br>산책 코스 메이커</div>',unsafe_allow_html=True)
+st.markdown('<div class="hero-sub">가벼운 마음이 멀리 간다</div><div class="byline">BY 물꼬방 약국</div>',unsafe_allow_html=True)
+st.image(str(ROOT/'assets'/'hero.png'),use_container_width=True)
+st.markdown('<div class="hero-caption">2027. 1. 9. 토요일 · 부산 · 교사들의 느긋한 동네 탐방</div>',unsafe_allow_html=True)
 
-st.caption("전국국어교사모임 · 부산 · 2027년 1월 9일 토요일")
-st.title("🌊 2027 겨울 물꼬방")
-st.header("산책 코스 메이커")
-st.markdown("*가벼운 마음이 멀리 간다*  ")
-st.caption("By 물꼬방 약국")
-st.markdown('<div class="intro">책과 사람, 골목과 바다를 만나는 부산의 오후.<br>많이 방문하는 것보다 우리 모둠에게 잘 맞는 곳을 고르는 산책을 제안합니다.</div>', unsafe_allow_html=True)
-st.progress(st.session_state.phase/3, text=f"{st.session_state.phase} / 3 단계")
+st.header('01  어떤 바다를 걸을까요?')
+labels={a['name']:a['id'] for a in AREAS}
+initial=(shared or {}).get('a',AREAS[0]['id'])
+index=[a['id'] for a in AREAS].index(initial)
+area_name=st.selectbox('탐방 지역 · 7개 코스',options=list(labels),index=index)
+area_id=labels[area_name];area=AREA[area_id]
+st.markdown(f'<div class="area-note"><b>{safe(area["name"])}</b> — {safe(area["subtitle"])}<br><small>후보지의 실제 위치는 카카오맵 결과로 확인하고, 적합한 장소만 표시합니다.</small></div>',unsafe_allow_html=True)
+interest_default=(shared or {}).get('interests',['독립서점','카페·디저트','문화·공간','자연·풍경'])
+interest_default=[v for v in interest_default if v in CATEGORIES]
+interests=st.multiselect('관심 있는 분야 · 여러 개 선택',CATEGORIES,default=interest_default,placeholder='분야 선택')
+with st.expander('나의 출발지와 시간 정하기',expanded=True):
+ left,right=st.columns(2)
+ with left:
+  preset=st.selectbox('출발 방법',['직접 장소 입력','보다스테이 2·3호','보다스테이 더펜트','광안리273','현재 위치(GPS)'])
+  custom=st.text_input('출발 장소/숙소 명칭',value='광안리해수욕장' if preset=='직접 장소 입력' else '',placeholder='예: 광안리해수욕장, 부산역, 숙소 이름',disabled=preset!='직접 장소 입력')
+  people=int(st.number_input('모둠 인원',min_value=1,max_value=30,value=4,step=1))
+  budget=st.selectbox('1인 식사 예산',['정하지 않음','1만원 이하','1만~2만원','2만~3만원','3만원 이상'])
+  st.caption('식사 예산은 기록용입니다. 확인되지 않은 메뉴 가격으로 장소를 임의로 제외하지 않습니다.')
+ with right:
+  start_obj=st.time_input('탐방 시작',value=time.fromisoformat((shared or {}).get('start','10:00')))
+  end_obj=st.time_input('탐방 종료',value=time.fromisoformat((shared or {}).get('end','16:00')))
+  mode=st.radio('주요 이동 수단',['도보','택시','자동차'],index=['도보','택시','자동차'].index((shared or {}).get('mode','도보')),horizontal=True)
+  meal_buffer=int(st.select_slider('식사 장소 추가 여유 시간',options=[0,10,20,30],value=10,format_func=lambda n:f'{n}분'))
+ st.caption('GPS는 선택 사항입니다. 허용하지 않아도 숙소나 출발지를 입력하여 사용할 수 있습니다. 개인 위치를 코스 공유 링크에 넣지 않습니다.')
+ location=None
+ if preset=='현재 위치(GPS)':
+  try:
+   from streamlit_geolocation import streamlit_geolocation
+   raw=streamlit_geolocation()
+   if isinstance(raw,dict) and raw.get('latitude') is not None and raw.get('longitude') is not None:
+    la,lo=float(raw['latitude']),float(raw['longitude'])
+    if 34.6<la<36.0 and 128.5<lo<130.0:
+     location={'name':'나의 현재 위치(GPS)','address':'GPS 위치(개인 정보)','lat':la,'lon':lo}
+     st.success('현재 위치를 확인했습니다. 공유 링크에는 이 좌표를 넣지 않습니다.')
+    else:st.warning('GPS 좌표가 부산 일대가 아닙니다. 직접 장소 입력 방식으로 변경할 수 있습니다.')
+   else:st.info('위치 사용 버튼을 눌러 위치를 허용하세요. 거부하면 출발 방법을 직접 입력으로 바꾸세요.')
+  except Exception:
+   st.warning('브라우저 GPS 사용이 어려워요. 직접 장소 입력을 선택하면 동일하게 이용할 수 있습니다.')
 
-if st.session_state.phase == 1:
-    st.subheader("1. 우리 모둠의 산책 조건")
-    origin_opt = st.radio("출발 장소", ["현재 위치 자동 확인", *ORIGINS, "다른 장소 직접 입력"], index=1)
-    origin_name = ORIGINS.get(origin_opt, "")
-    current_coords = None
-    if origin_opt == "현재 위치 자동 확인":
-        st.info("아래 '현재 위치 가져오기' 버튼을 누르면 브라우저의 위치 권한을 요청합니다. 허용하지 않으면 직접 주소를 입력할 수 있습니다.")
-        # Browser geolocation requires a custom browser component; this deployment uses a reliable manual fallback.
-        st.caption("현재 배포판에서는 자동 GPS가 지원되지 않습니다. 위치 권한을 임의로 사용하지 않습니다.")
-        origin_name = st.text_input("현재 있는 장소 또는 주소", placeholder="예: 부산 광안리해수욕장")
-    elif origin_opt == "다른 장소 직접 입력":
-        origin_name = st.text_input("출발 장소명 또는 주소", placeholder="예: 부산역")
-    area = st.selectbox("탐방 지역", list(AREAS))
-    col1, col2 = st.columns(2)
-    times = [f"{h:02d}:{m:02d}" for h in range(12,22) for m in (0,30)]
-    with col1: start = st.selectbox("시작 시간", times, index=5)
-    with col2: end = st.selectbox("종료 시간", times, index=14)
-    col1, col2 = st.columns(2)
-    with col1: people = st.selectbox("모둠 인원", list(range(2,11)), index=2)
-    with col2: budget = st.selectbox("1인 식사 예산", ["15,000원 이하", "15,000~20,000원", "20,000~30,000원", "제한 없음"], index=1)
-    mode = st.radio("이동 방식", ["도보 중심", "탐방 지역까지 택시, 이후 도보", "자가 운전"], index=1)
-    st.caption("추천 문구는 물꼬방 취향에 맞춰 편집했습니다. 장소 위치·전화번호는 카카오에서 조회합니다.")
-    if st.button("추천 장소 만나기 →", type="primary", use_container_width=True):
-        if not origin_name.strip(): st.error("출발 장소를 입력해 주세요.")
-        elif end <= start: st.error("종료 시간은 시작 시간보다 늦어야 합니다.")
-        else:
-            st.session_state.trip = dict(origin=origin_name, area=area, start=start, end=end, people=people, budget=budget, mode=mode)
-            st.session_state.selected = []
-            st.session_state.phase = 2
-            st.rerun()
+key=''
+try:key=st.secrets.get('KAKAO_REST_API_KEY','')
+except Exception:pass
+if not key:
+ st.error('Streamlit Secrets에서 KAKAO_REST_API_KEY를 읽지 못했습니다. 장소 검색은 API 키가 있을 때만 제공됩니다. 키를 채팅에 입력하지 마세요.')
+ st.stop()
+with st.spinner(f'{area_name}의 실제 장소를 카카오맵과 대조하는 중입니다…'):
+ places=load_area(area_id,key)
+place_map={p['name']:p for p in places}
+if shared and area_id==shared['a']:
+ previous=st.session_state.selected.setdefault(area_id,[])
+ for name in shared['s']:
+  if name in place_map and name not in previous:previous.append(name)
+selected=st.session_state.selected.setdefault(area_id,[])
+selected[:]=[x for x in selected if x in place_map]
 
-elif st.session_state.phase == 2:
-    trip = st.session_state.trip; config = AREAS[trip["area"]]
-    st.subheader(f"2. {trip['area']}에서 무엇을 만날까요?")
-    st.write("모둠의 취향에 맞는 장소를 골라보세요. 각 장소의 이야기를 먼저 읽고, 가고 싶은 곳만 체크하면 됩니다.")
-    st.caption("장소별 실제 사진은 사용 권한을 확인한 파일부터 표시합니다. 사진이 없는 장소에는 준비 중 안내가 나옵니다.")
-    selected = set(st.session_state.selected)
-    for cat, icon in zip(CATS, ICONS):
-        st.markdown(f"### {icon} {cat}")
-        matches = [(i, p) for i,p in enumerate(config["spots"]) if p[1] == cat]
-        if not matches: st.caption("이 지역에서 확인된 추천 후보가 아직 없습니다.")
-        for i, (name, _, description, warning, stay) in matches:
-            with st.container(border=True):
-                left, right = st.columns([1.25, 2], gap="medium")
-                with left:
-                    photo, credit = photo_for(name)
-                    if photo:
-                        st.image(photo, use_container_width=True)
-                        if credit: st.caption(f"사진: {credit}")
-                    else:
-                        st.markdown("<div style='background:#e9f3f5;border-radius:14px;min-height:140px;display:flex;align-items:center;justify-content:center;color:#617b84;text-align:center'>📷<br>장소 사진 준비 중</div>", unsafe_allow_html=True)
-                with right:
-                    checked = st.checkbox(f"{name}", value=i in selected, key=f"choose_{trip['area']}_{i}")
-                    st.write(description)
-                    st.caption(f"⏱ 권장 체류 {stay}분")
-                    st.caption(f"⚠️ {warning}")
-                    if checked: selected.add(i)
-                    else: selected.discard(i)
-    st.session_state.selected = sorted(selected)
-    st.write(f"**{len(selected)}곳 선택됨**")
-    a,b = st.columns(2)
-    if a.button("← 조건 바꾸기", use_container_width=True): st.session_state.phase=1; st.rerun()
-    if b.button("우리 산책 코스 만들기 →", type="primary", use_container_width=True, disabled=not selected):
-        st.session_state.phase=3; st.session_state.route=[]; st.rerun()
+st.header('02  마음에 드는 장소를 담아요')
+if len(places)<20:
+ st.warning(f'카카오에서 이번 탐방 지역의 후보 {len(places)}곳을 확인했습니다. 20곳 미만이므로 아직 장소 데이터 검증이 충분하지 않습니다. 적합하지 않은 장소로 숫자를 채우지 않았습니다.')
+else:st.caption(f'카카오 장소 정보가 확인된 후보 **{len(places)}곳** · 장소 카드의 이미지는 실제 사진이 아닌 각각의 창작 삽화입니다.')
+if not places:
+ st.error('현재 카카오 API에서 장소를 불러오지 못했습니다. API 설정 또는 통신 상황을 확인하고 잠시 뒤 다시 시도하세요.')
+ st.stop()
 
-else:
-    trip = st.session_state.trip; config = AREAS[trip["area"]]
-    st.subheader("3. 우리 모둠의 다정한 산책")
-    st.caption(f"2027. 1. 9. (토) · {trip['people']}명 · {trip['mode']} · {trip['area']}")
-    if st.button("← 장소 다시 고르기"): st.session_state.phase=2; st.rerun()
-    with st.spinner("카카오에서 장소 위치와 연락처를 확인하고 있어요..."):
-        places = []
-        errors = []
-        for idx in st.session_state.selected:
-            item = config["spots"][idx]
-            geo, err = resolve(item[0], config["center"])
-            if geo: places.append({"id":idx,"item":item,"geo":geo})
-            else: errors.append(f"{item[0]}: {err or '검색 결과 없음'}")
-        origin_geo, origin_error = resolve(trip["origin"], config["center"])
-    if errors:
-        st.warning("일부 장소의 카카오 검색 결과를 확인하지 못했습니다. " + "; ".join(errors))
-    if not places:
-        st.error("장소 위치를 확인할 수 없습니다. 카카오 API 설정과 검색어를 확인해 주세요.")
-        st.stop()
-    origin_point = (origin_geo["lat"], origin_geo["lon"]) if origin_geo else config["center"]
-    if not origin_geo: st.warning("출발지 위치를 확인하지 못해 탐방 지역 중심점을 임시 기준으로 사용했습니다. 정확한 출발 동선은 아닙니다.")
-    if not st.session_state.route:
-        st.session_state.route = [p["id"] for p in order_nearby(places, origin_point)]
-    ids = [p["id"] for p in places]
-    st.session_state.route = [i for i in st.session_state.route if i in ids] + [i for i in ids if i not in st.session_state.route]
-    st.markdown("#### 추천 방문 순서")
-    st.caption("장소 좌표 간 직선거리를 줄이는 순서입니다. 실제 도보 길찾기나 교통시간을 계산한 결과는 아닙니다.")
-    for pos, idx in enumerate(st.session_state.route):
-        p = next(p for p in places if p["id"]==idx)
-        a,b,c = st.columns([6,1,1])
-        a.write(f"**{pos+1}. {p['item'][0]}**")
-        if b.button("↑", key=f"up_{idx}", disabled=pos==0):
-            st.session_state.route[pos-1],st.session_state.route[pos]=st.session_state.route[pos],st.session_state.route[pos-1];st.rerun()
-        if c.button("↓", key=f"down_{idx}", disabled=pos==len(st.session_state.route)-1):
-            st.session_state.route[pos+1],st.session_state.route[pos]=st.session_state.route[pos],st.session_state.route[pos+1];st.rerun()
-    ordered = [next(p for p in places if p["id"]==idx) for idx in st.session_state.route]
-    st.markdown("#### 🗺️ 선택한 장소와 방문 순서")
-    coordinates = [(p["geo"]["lat"],p["geo"]["lon"]) for p in ordered]
-    fmap = folium.Map(location=[sum(x[0] for x in coordinates)/len(coordinates),sum(x[1] for x in coordinates)/len(coordinates)], zoom_start=14, control_scale=True)
-    for i,p in enumerate(ordered,1):
-        folium.Marker([p["geo"]["lat"],p["geo"]["lon"]], tooltip=f"{i}. {p['item'][0]}", popup=p["item"][0], icon=folium.Icon(color="blue", icon="info-sign")).add_to(fmap)
-    if len(coordinates)>1: folium.PolyLine(coordinates, color="#147c9a", weight=4, opacity=.8, dash_array="7,7").add_to(fmap)
-    st_folium(fmap, width=None, height=370, returned_objects=[])
-    st.caption("점선은 장소를 직선으로 이은 위치 관계도입니다. 실제 보행 경로가 아닙니다.")
-    st.markdown("#### ⏰ 추천 일정")
-    now = datetime.strptime(trip["start"], "%H:%M")
-    deadline = datetime.strptime(trip["end"], "%H:%M")
-    rows=[]; previous=origin_point; notes=[]
-    for i,p in enumerate(ordered):
-        coords=(p["geo"]["lat"],p["geo"]["lon"])
-        km=distance_km(previous,coords)
-        if i==0 and trip["mode"]!="도보 중심":
-            move_label=f"첫 이동 약 {km:.1f}km (택시·차량 소요시간 별도 확인)"
-            move_min=20
-        else:
-            move_label=f"직선거리 약 {km:.1f}km (실제 도보 거리는 더 길 수 있음)"
-            move_min=max(5,math.ceil(km*1000/65))
-        move_start=now; now+=timedelta(minutes=move_min)
-        rows.append({"시간":f"{move_start:%H:%M}–{now:%H:%M}","장소":"이동", "활동":move_label})
-        name,cat,description,warning,stay=p["item"]
-        arrive=now;now+=timedelta(minutes=stay)
-        rows.append({"시간":f"{arrive:%H:%M}–{now:%H:%M}","장소":name,"활동":description})
-        notes.append((name,warning,p["geo"]))
-        previous=coords
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.metric("임시 일정 종료 예상", now.strftime("%H:%M"))
-    if now>deadline: st.error("설정한 종료 시간을 초과합니다. 장소 수나 체류 시간을 줄여 보세요.")
-    else: st.success("임시 시간표상 종료 시간 이내입니다. 실제 이동·대기 시간은 더 걸릴 수 있습니다.")
-    st.markdown("#### 📌 방문 전에 알아둘 점")
-    for name,warning,geo in notes:
-        with st.container(border=True):
-            st.markdown(f"**{name}**")
-            st.write(warning)
-            st.caption(f"📍 {geo['address']}")
-            if geo["phone"]: st.write(f"☎️ {geo['phone']}")
-            if geo["url"]: st.link_button("카카오맵에서 위치·영업정보 확인",geo["url"])
-    st.info("영업시간·휴무·가격·예약 가능 여부는 카카오 로컬 검색만으로 검증할 수 없습니다. 방문 전 매장에 확인해 주세요. 일정표의 이동시간은 단순 추정치입니다.")
-    text_lines=["🌊 2027 겨울 물꼬방 산책 코스 메이커",f"출발: {trip['origin']} / {trip['start']}",f"지역: {trip['area']} / {trip['people']}명", ""]
-    text_lines += [f"{r['시간']} | {r['장소']} | {r['활동']}" for r in rows]
-    text_lines += ["", "방문 전 확인 사항"]+[f"{name}: {warning} / {geo['phone']} / {geo['url']}" for name,warning,geo in notes]
-    st.download_button("📄 우리 모둠 일정 저장", "\n".join(text_lines), file_name="mulkkobang_walk_2027.txt", mime="text/plain", use_container_width=True)
-    if st.button("처음부터 다시",use_container_width=True): st.session_state.phase=1;st.session_state.selected=[];st.session_state.route=[];st.rerun()
+active=[c for c in CATEGORIES if c in interests]
+if not active:st.info('관심 분야를 한 가지 이상 골라 주세요.')
+show_all=st.toggle('이 지역의 전체 후보 보기 (기본: 분야별 우선 추천 3~5곳)',value=False)
+display=[]
+for cat in active:
+ cat_places=[p for p in places if p['category']==cat]
+ if not show_all:cat_places=cat_places[:5]
+ display.extend(cat_places)
+counts={c:sum(p['category']==c for p in places) for c in CATEGORIES}
+st.caption(' · '.join(f'{c} {counts[c]}' for c in CATEGORIES))
+
+def toggle_selection(name):
+ current=st.session_state.selected.setdefault(area_id,[])
+ if name in current:current.remove(name)
+ else:current.append(name)
+ st.session_state.route=None
+
+if active and not display:st.info('해당 분야의 실제 확인된 후보가 없습니다. 다른 분야를 선택하거나 전체 후보를 살펴보세요.')
+for cat in active:
+ group=[p for p in display if p['category']==cat]
+ if not group:continue
+ st.subheader(f'{cat}  ·  {counts[cat]}곳')
+ for j in range(0,len(group),3):
+  cols=st.columns(3,gap='medium')
+  for col,p in zip(cols,group[j:j+3]):
+   with col:
+    with st.container(border=True):
+     st.image(image_for(p),use_container_width=True)
+     st.markdown(f'**{safe(p["name"])}**')
+     st.caption(('✦ 물꼬방 추천 후보' if p['editorial'] else '◦ 지도에서 찾은 추가 후보')+' · '+str(p['minutes'])+'분 머무름')
+     st.write(p['description'])
+     st.caption('**이곳을 권하는 이유**  '+p['why'])
+     st.caption('📍 '+p['address'])
+     st.caption('💳 '+p['budget_note']+'  ·  🕒 '+p['hours'])
+     if p['phone']:st.caption('☎ '+p['phone'])
+     st.caption('ⓘ '+p['notice'])
+     if p['url']:st.markdown(f'[카카오맵 장소 정보 ↗]({p["url"]})')
+     st.button('✓ 내 코스에서 빼기' if p['name'] in selected else '+ 내 코스에 담기',key='btn_'+area_id+'_'+hashlib.md5(p['name'].encode()).hexdigest()[:13],
+      on_click=toggle_selection,args=(p['name'],),use_container_width=True,type='primary' if p['name'] in selected else 'secondary')
 
 st.divider()
-st.caption("물꼬방 약국 기획 · 장소 추천 문구는 편집 정보 · 위치와 연락처는 카카오 로컬 검색 결과 · GPS·실제 길찾기는 추가 개발 예정 · 장소 사진은 제공된 검증 사진만 표시")
+st.header('03  우리의 산책길을 만들어요')
+st.caption('선택한 장소는 여러 개 담을 수 있습니다. 경로 계산은 실제 도로·보행망을 우선 이용하며, 실패 시 추정치로 별도 표시합니다.')
+if selected:
+ st.write('**담은 장소 ('+str(len(selected))+'곳)**  '+ '  ·  '.join(selected))
+ stay_changes={}
+ with st.expander('장소별 체류 시간 조정',expanded=False):
+  for name in selected:
+   stay_changes[name]=int(st.number_input(name+' · 머무를 시간(분)',min_value=10,max_value=180,step=5,
+     value=int(place_map[name]['minutes']),key='stay_'+area_id+'_'+hashlib.md5(name.encode()).hexdigest()[:13]))
+ cols=st.columns([1,1,2])
+ with cols[0]:
+  if st.button('전체 선택 해제',use_container_width=True):
+   selected.clear();st.session_state.route=None;st.rerun()
+ with cols[1]:
+  if st.button('코스 다시 계산',use_container_width=True):
+   st.session_state.route=None
+else:st.info('위의 장소 카드에서 가고 싶은 곳을 담으면 이곳에 코스가 나타납니다.')
+
+origin_text=custom if preset=='직접 장소 입력' else {'보다스테이 2·3호':'부산 광안리 보다스테이','보다스테이 더펜트':'보다스테이 더펜트','광안리273':'광안리273'}.get(preset,'')
+@st.cache_data(ttl=2400,show_spinner=False)
+def lookup_origin(s,_key):return find_origin(_key,s)
+origin=location or (lookup_origin(origin_text,key) if origin_text else None)
+if origin:st.caption(f'출발: {origin["name"]} · {origin["address"]}')
+elif selected:st.warning('출발지 주소를 아직 확인하지 못했습니다. 장소 이름을 더 구체적으로 입력하거나 GPS를 허용해 주세요.')
+
+if st.button('🌊 선택한 장소로 코스 만들기',type='primary',use_container_width=True,disabled=not bool(selected) or not bool(origin)):
+ try:
+  picks=[{**place_map[n],'minutes':stay_changes.get(n,place_map[n]['minutes'])} for n in selected if n in place_map]
+  if len(picks)>9:st.info('선택 장소가 많아 경로 계산에 시간이 더 걸릴 수 있습니다.')
+  with st.spinner('장소의 순서를 정하고 실제 도로·보행 경로를 조회하고 있어요…'):
+   result=plan_schedule(origin,picks,start_obj.strftime('%H:%M'),end_obj.strftime('%H:%M'),mode,meal_buffer)
+  st.session_state.route={'plan':result,'origin':origin,'area':area_id,'chosen':list(selected),'settings':(start_obj.strftime('%H:%M'),end_obj.strftime('%H:%M'),mode,meal_buffer)}
+ except Exception as e:st.error('코스를 생성하지 못했습니다: '+str(e))
+
+route=st.session_state.route
+if route and route['area']==area_id and all(n in selected for n in route['chosen']):
+ plan=route['plan'];st.subheader('한눈에 보는 우리의 코스')
+ c1,c2,c3=st.columns(3)
+ c1.metric('전체 예상 시간',f"{plan['minutes']//60}시간 {plan['minutes']%60}분")
+ c2.metric('마지막 장소 종료',plan['end'])
+ c3.metric('예정된 종료 시간',plan['deadline'])
+ if plan['fits']:st.success('입력하신 탐방 시간 안에 방문할 수 있는 일정으로 계산했습니다. 단, 대기와 영업시간은 최종 확인해 주세요.')
+ else:st.warning(f'현재 일정은 종료 시각보다 **{plan["over_minutes"]}분** 늦습니다. 방문 장소를 줄이거나 체류·시작 시간을 조정해 다시 계산해 주세요.')
+ if not plan['all_verified']:
+  st.warning('일부 구간에서 공개 경로 서비스가 응답하지 않았습니다. 주황색 점선과 해당 이동시간은 직선거리 기반 보정 추정이며, 실제 도보/차량 길찾기가 아닙니다.')
+ else:st.caption('파란 실선은 공개 Valhalla/OSM 보행·차량 경로를 조회하여 표시했습니다. 택시는 승차 대기 시간 5분을 추가했습니다.')
+ m=make_map(route['origin'],plan)
+ components.html(m.get_root().render(),height=485,scrolling=False)
+ data=[]
+ for r in plan['schedule']:
+  data.append({'순서':r['number'],'장소':r['name'],'도착':r['arrive'],'체류':f"{r['stay']}분",'출발':r['leave'],
+   '직전 이동':f"{r['travel']}분",'이동 근거':'실제 공개 경로' if r['verified'] else '미검증 추정'})
+ st.dataframe(pd.DataFrame(data),use_container_width=True,hide_index=True)
+ with st.expander('장소별 유의 사항 및 이동 검증 내역',expanded=False):
+  for r in plan['schedule']:
+   st.markdown(f"**{r['number']}. {r['name']}** · {r['arrive']} 도착 / {r['stay']}분 체류")
+   st.caption('주소: '+r['address']+' · '+r['notice']+' · '+r['provider'])
+ st.caption('카카오 로컬 API는 영업시간·휴무·가격·예약 상태를 보장하지 않습니다. 2027년 1월 9일 이용 가능 여부는 장소 링크/전화로 방문 전에 확인하세요. 인원·식사 예산은 단체 좌석과 메뉴를 확인하기 위한 참고 설정이며 자동 확약이 아닙니다.')
+ st.subheader('저장하고 모둠에 공유하기')
+ params={'start':start_obj.strftime('%H:%M'),'end':end_obj.strftime('%H:%M'),'mode':mode,'interests':interests}
+ token=pack_share(area_id,selected,params)
+ share_url=PUBLIC_URL.rstrip('/')+'/?plan='+token
+ st.code(share_url,language=None)
+ st.caption('위 링크를 복사해 공유하세요. 출발지의 GPS 좌표는 링크에 저장되지 않습니다. 공유받은 사람은 자기 출발지를 다시 정할 수 있습니다.')
+ exported={'event':'2027-01-09 물꼬방','area':area['name'],'participants':people,'meal_budget':budget,
+  'mode':mode,'origin_name':route['origin']['name'] if route['origin']['name']!='나의 현재 위치(GPS)' else '현재 위치(비공개)',
+  'schedule':plan['schedule'],'warning':'영업시간·가격·예약은 장소별로 재확인 필요'}
+ x,y,z=st.columns(3)
+ with x:st.download_button('일정표 CSV',pd.DataFrame(data).to_csv(index=False).encode('utf-8-sig'),file_name='물꼬방_산책일정.csv',mime='text/csv',use_container_width=True)
+ with y:st.download_button('코스 저장 JSON',json.dumps(exported,ensure_ascii=False,indent=2).encode('utf-8'),file_name='물꼬방_나의산책.json',mime='application/json',use_container_width=True)
+ with z:st.download_button('캘린더에 담기 ICS',ics_text(plan,plan['ordered']).encode('utf-8'),file_name='물꼬방_산책일정.ics',mime='text/calendar',use_container_width=True)
+ st.info('수정하려면 위의 장소 카드를 추가하거나 빼고, 시작·종료 시각을 바꾼 뒤 「코스 만들기」를 다시 누르세요.')
+
+st.divider()
+st.markdown('**다정한 바다 산책 코스 메이커**  ·  By 물꼬방 약국')
+st.caption('장소 정보: Kakao Local API · 보행/차량 경로: Valhalla / OpenStreetMap(응답 시) · 기본 지도: © OpenStreetMap 기여자 · 삽화: 장소별 독립 창작 스케치 · 2027.1.9 운영 정보는 사전 재확인')

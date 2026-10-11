@@ -1,5 +1,7 @@
-streamlit>=1.35,<2
-requests>=2.31
-pandas>=2.0
-folium>=0.16
-streamlit-folium>=0.20
+streamlit>=1.43,<2
+requests>=2.31,<3
+pandas>=2.0,<3
+folium>=0.17,<1
+Pillow>=10.0,<13
+numpy>=1.26,<3
+streamlit-geolocation==0.0.10
