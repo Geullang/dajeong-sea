@@ -30,3 +30,5 @@
 
 
 2026-10-12 update: one course only, maximum 3 interests, fixed 6-hour duration (start 12:00-14:00, end auto), 4-8 people, walking/taxi/private car.
+
+2026-10-12 도착지 수정: 현재 위치 설정 삭제. 출발지와 동일 / 숙소 3곳 / 직접 장소 검색(OpenStreetMap Nominatim 검색 결과 선택). 검색 서비스는 외부 네트워크 및 데이터 범위에 따라 결과가 없을 수 있음. 실제 경로 계산은 아직 미연동.
