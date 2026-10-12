@@ -32,3 +32,10 @@
 2026-10-12 update: one course only, maximum 3 interests, fixed 6-hour duration (start 12:00-14:00, end auto), 4-8 people, walking/taxi/private car.
 
 2026-10-12 도착지 수정: 현재 위치 설정 삭제. 출발지와 동일 / 숙소 3곳 / 직접 장소 검색(OpenStreetMap Nominatim 검색 결과 선택). 검색 서비스는 외부 네트워크 및 데이터 범위에 따라 결과가 없을 수 있음. 실제 경로 계산은 아직 미연동.
+
+
+### 이번 수정
+- 도착지의 '출발지와 동일 / 다른 장소 지정' 라디오 버튼 제거
+- 숙소 3곳 드롭다운 및 상시 노출 직접 검색
+- 검색은 OpenStreetMap Nominatim 기반으로, 숙소 이름 등 상호 검색이 누락될 수 있습니다. 실제 한국 상호명 검색을 안정적으로 지원하려면 카카오 로컬 API 연동이 필요합니다.
+- 직접 검색 결과를 클릭해야 좌표가 확정됩니다.
